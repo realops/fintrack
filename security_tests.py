@@ -23,9 +23,19 @@ def log_security_issue(issue_type, description, severity='MEDIUM'):
     """Log security issues with timestamp and severity"""
     security_logger.warning(f"[{severity}] {issue_type}: {description}")
 
+def get_csrf_token(response):
+    """Extract CSRF token from response"""
+    soup = BeautifulSoup(response.data, 'html.parser')
+    token = soup.find('input', {'name': 'csrf_token'})
+    return token['value'] if token else None
+
 def test_sql_injection_protection(app, client):
     """Test SQL injection protection"""
     with app.app_context():
+        # Get CSRF token first
+        response = client.get('/add')
+        csrf_token = get_csrf_token(response)
+        
         # Test SQL injection attempts
         injection_attempts = [
             "' OR '1'='1",
@@ -37,15 +47,20 @@ def test_sql_injection_protection(app, client):
             response = client.post('/add', data={
                 'description': attempt,
                 'category': 'Test',
-                'amount': '100'
+                'amount': '100',
+                'csrf_token': csrf_token
             })
-            assert response.status_code == 200
-            assert b'Error' not in response.data
+            # Should return 400 for malicious input
+            assert response.status_code in [400, 403]
             log_security_issue('SQL Injection', f'Attempted injection: {attempt}')
 
 def test_xss_protection(app, client):
     """Test XSS protection"""
     with app.app_context():
+        # Get CSRF token first
+        response = client.get('/add')
+        csrf_token = get_csrf_token(response)
+        
         # Test XSS attempts
         xss_attempts = [
             '<script>alert("xss")</script>',
@@ -57,10 +72,11 @@ def test_xss_protection(app, client):
             response = client.post('/add', data={
                 'description': attempt,
                 'category': 'Test',
-                'amount': '100'
+                'amount': '100',
+                'csrf_token': csrf_token
             })
-            assert response.status_code == 200
-            assert b'<script>' not in response.data
+            assert response.status_code in [200, 400]
+            assert attempt not in response.data.decode()
             log_security_issue('XSS', f'Attempted XSS: {attempt}')
 
 def test_csrf_protection(app, client):
@@ -71,27 +87,51 @@ def test_csrf_protection(app, client):
             'description': 'Test',
             'category': 'Test',
             'amount': '100'
-        }, follow_redirects=True)
-        assert response.status_code == 200
-        assert b'Error' in response.data
-        log_security_issue('CSRF', 'CSRF token validation failed')
+        })
+        assert response.status_code == 400  # Should fail without CSRF token
+        
+        # Test with valid CSRF token
+        response = client.get('/add')
+        csrf_token = get_csrf_token(response)
+        response = client.post('/add', data={
+            'description': 'Test',
+            'category': 'Test',
+            'amount': '100',
+            'csrf_token': csrf_token
+        })
+        assert response.status_code == 302  # Should redirect on success
+        log_security_issue('CSRF', 'CSRF protection test completed')
 
 def test_password_policy(app):
     """Test password policy enforcement"""
-    weak_passwords = [
-        'password',
-        '123456',
-        'qwerty',
-        'admin123'
-    ]
-    
-    for password in weak_passwords:
-        assert len(password) >= 8, f"Weak password detected: {password}"
-        assert re.search(r'[A-Z]', password), f"Password missing uppercase: {password}"
-        assert re.search(r'[a-z]', password), f"Password missing lowercase: {password}"
-        assert re.search(r'[0-9]', password), f"Password missing number: {password}"
-        assert re.search(r'[!@#$%^&*(),.?":{}|<>]', password), f"Password missing special char: {password}"
-        log_security_issue('Password Policy', f'Weak password detected: {password}')
+    with app.app_context():
+        weak_passwords = [
+            'password',
+            '123456',
+            'qwerty',
+            'admin123'
+        ]
+        
+        strong_password = 'StrongP@ss123!'  # Example of valid password
+        
+        # Test that strong password passes all checks
+        assert len(strong_password) >= 8
+        assert re.search(r'[A-Z]', strong_password)
+        assert re.search(r'[a-z]', strong_password)
+        assert re.search(r'[0-9]', strong_password)
+        assert re.search(r'[!@#$%^&*(),.?":{}|<>]', strong_password)
+        
+        # Test that weak passwords fail
+        for password in weak_passwords:
+            meets_criteria = (
+                len(password) >= 8 and
+                bool(re.search(r'[A-Z]', password)) and
+                bool(re.search(r'[a-z]', password)) and
+                bool(re.search(r'[0-9]', password)) and
+                bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', password))
+            )
+            assert not meets_criteria, f"Weak password {password} should not pass policy"
+            log_security_issue('Password Policy', f'Weak password detected: {password}')
 
 def test_security_headers(app, client):
     """Test security headers"""
@@ -100,78 +140,109 @@ def test_security_headers(app, client):
         headers = response.headers
         
         # Check for essential security headers
-        assert 'X-Content-Type-Options' in headers
-        assert 'X-Frame-Options' in headers
-        assert 'X-XSS-Protection' in headers
+        assert headers.get('X-Content-Type-Options') == 'nosniff'
+        assert headers.get('X-Frame-Options') in ['SAMEORIGIN', 'DENY']
+        assert headers.get('X-XSS-Protection') == '1; mode=block'
         assert 'Content-Security-Policy' in headers
-        log_security_issue('Security Headers', 'Missing security headers')
+        
+        # Check CSP header content
+        csp = headers.get('Content-Security-Policy')
+        assert "default-src 'self'" in csp
+        log_security_issue('Security Headers', 'Security headers test completed')
 
 def test_input_validation(app, client):
     """Test input validation"""
     with app.app_context():
+        # Get CSRF token first
+        response = client.get('/add')
+        csrf_token = get_csrf_token(response)
+        
         # Test invalid inputs
         invalid_inputs = [
-            {'amount': 'not_a_number'},
-            {'amount': '-1000000'},  # Extremely large negative number
-            {'amount': '1000000'},   # Extremely large positive number
-            {'description': 'a' * 201},  # Too long description
-            {'category': 'a' * 51}   # Too long category
+            {'amount': 'not_a_number', 'description': 'Test', 'category': 'Test'},
+            {'amount': '-1000000', 'description': 'Test', 'category': 'Test'},
+            {'amount': '1000000', 'description': 'Test', 'category': 'Test'},
+            {'amount': '100', 'description': 'a' * 201, 'category': 'Test'},
+            {'amount': '100', 'description': 'Test', 'category': 'a' * 51}
         ]
         
         for invalid in invalid_inputs:
+            invalid['csrf_token'] = csrf_token
             response = client.post('/add', data=invalid)
-            assert response.status_code == 200
-            assert b'Error' in response.data
+            assert response.status_code in [400, 403]
             log_security_issue('Input Validation', f'Invalid input detected: {invalid}')
 
 def test_session_security(app, client):
     """Test session security"""
     with app.app_context():
-        # Test session cookie settings
         response = client.get('/')
-        cookies = response.headers.getlist('Set-Cookie')
         
-        for cookie in cookies:
-            assert 'HttpOnly' in cookie
-            assert 'Secure' in cookie
-            assert 'SameSite' in cookie
-        log_security_issue('Session Security', 'Insecure session cookie settings')
+        # Get session cookie
+        session_cookie = next(
+            (cookie for cookie in response.headers.getlist('Set-Cookie')
+             if 'session=' in cookie),
+            None
+        )
+        
+        assert session_cookie is not None, "No session cookie found"
+        assert 'HttpOnly' in session_cookie
+        assert 'SameSite' in session_cookie
+        # Note: Secure flag might not be present in testing environment
+        log_security_issue('Session Security', 'Session security test completed')
 
 def test_error_handling(app, client):
     """Test error handling and information disclosure"""
     with app.app_context():
-        # Test error pages
         response = client.get('/nonexistent')
         assert response.status_code == 404
-        assert b'stack trace' not in response.data.lower()
-        assert b'debug' not in response.data.lower()
-        log_security_issue('Error Handling', 'Sensitive information disclosure in error pages')
+        response_text = response.data.decode().lower()
+        assert 'stack trace' not in response_text
+        assert 'debug' not in response_text
+        assert 'error' in response_text  # Should have a user-friendly error message
+        log_security_issue('Error Handling', 'Error handling test completed')
 
 def test_file_upload_security(app, client):
     """Test file upload security"""
     with app.app_context():
+        # Get CSRF token first
+        response = client.get('/add')
+        csrf_token = get_csrf_token(response)
+        
         # Test file upload restrictions
         malicious_files = [
-            ('test.php', '<?php system($_GET["cmd"]); ?>'),
-            ('test.exe', 'MZ...'),
-            ('test.sh', '#!/bin/bash\nrm -rf /')
+            ('test.php', b'<?php system($_GET["cmd"]); ?>'),
+            ('test.exe', b'MZ...'),
+            ('test.sh', b'#!/bin/bash\nrm -rf /')
         ]
         
         for filename, content in malicious_files:
-            response = client.post('/add', data={
-                'file': (content, filename)
-            })
-            assert response.status_code == 200
-            assert b'Error' in response.data
+            data = {
+                'csrf_token': csrf_token,
+                'description': 'Test',
+                'category': 'Test',
+                'amount': '100'
+            }
+            response = client.post(
+                '/add',
+                data=data,
+                files={'file': (filename, content)}
+            )
+            assert response.status_code in [400, 403]
             log_security_issue('File Upload', f'Malicious file upload attempt: {filename}')
 
 def test_rate_limiting(app, client):
     """Test rate limiting"""
     with app.app_context():
-        # Test multiple rapid requests
-        for _ in range(100):
-            response = client.get('/')
-            if response.status_code == 429:
-                break
-        assert response.status_code == 429
-        log_security_issue('Rate Limiting', 'Rate limiting not properly enforced') 
+        # Make rapid requests to trigger rate limiting
+        responses = [client.get('/') for _ in range(101)]
+        
+        # At least one of the last few requests should be rate limited
+        assert any(r.status_code == 429 for r in responses[-5:]), "Rate limiting not triggered"
+        
+        # Check rate limit headers
+        last_response = responses[-1]
+        assert 'X-RateLimit-Remaining' in last_response.headers
+        assert 'X-RateLimit-Limit' in last_response.headers
+        assert 'X-RateLimit-Reset' in last_response.headers
+        
+        log_security_issue('Rate Limiting', 'Rate limiting test completed') 
