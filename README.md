@@ -114,6 +114,86 @@ Application logs are stored in the `logs` directory:
 - Rotating log files (max 10MB each, 10 backups)
 - Includes timestamp, log level, and source location
 
+## Security Testing
+
+The application includes comprehensive security testing and scanning capabilities:
+
+```bash
+# Run all security tests
+pytest security_tests.py -v
+
+# Run specific security tests
+pytest security_tests.py::test_sql_injection_protection
+pytest security_tests.py::test_xss_protection
+pytest security_tests.py::test_csrf_protection
+
+# Run security scans
+bandit -r app.py
+safety check
+```
+
+### Security Features
+
+1. **Input Validation**
+   - SQL injection protection
+   - XSS protection
+   - CSRF protection
+   - File upload restrictions
+   - Input length and type validation
+
+2. **Security Headers**
+   - Content Security Policy (CSP)
+   - X-Content-Type-Options
+   - X-Frame-Options
+   - X-XSS-Protection
+   - Strict-Transport-Security
+
+3. **Session Security**
+   - Secure cookies
+   - HttpOnly cookies
+   - SameSite cookie policy
+   - Session timeout
+
+4. **Rate Limiting**
+   - 200 requests per day
+   - 50 requests per hour
+   - IP-based limiting
+
+5. **Error Handling**
+   - Custom error pages
+   - No stack traces in production
+   - Secure error logging
+
+6. **Security Logging**
+   - Security events logged to `logs/security/security_scan.log`
+   - Timestamp and severity levels
+   - Detailed security issue descriptions
+
+### Security Best Practices
+
+1. **Environment Variables**
+   - Use environment variables for sensitive data
+   - Never commit secrets to version control
+   - Use different keys for development and production
+
+2. **Dependencies**
+   - Regular security updates
+   - Vulnerability scanning with `safety`
+   - Code quality scanning with `bandit`
+
+3. **Database Security**
+   - Parameterized queries
+   - Input sanitization
+   - Regular backups
+   - Access control
+
+4. **Production Deployment**
+   - HTTPS only
+   - Debug mode disabled
+   - Proper error handling
+   - Rate limiting enabled
+   - Security headers configured
+
 ## Security Note
 
 This is a development version. For production use:

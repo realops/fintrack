@@ -4,15 +4,46 @@ from datetime import datetime
 import psutil
 import os
 import logging
+import subprocess
+import pickle
+import yaml
+import json
 from logging.handlers import RotatingFileHandler
 from config import get_system_info
 from collections import defaultdict
-from sqlalchemy import func
+from sqlalchemy import func, text
+from flask_talisman import Talisman
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['SECRET_KEY'] = 'your-secret-key-here'  # Hardcoded secret key
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///transactions.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Security configurations
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
+
+# Initialize security extensions
+csrf = CSRFProtect(app)
+talisman = Talisman(
+    app,
+    content_security_policy={
+        'default-src': "'self'",
+        'script-src': "'self' 'unsafe-inline'",
+        'style-src': "'self' 'unsafe-inline'",
+        'img-src': "'self' data:",
+    }
+)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 # Configure logging
 if not os.path.exists('logs'):
@@ -73,22 +104,13 @@ def add_transaction():
         if category != 'Income' and amount > 0:
             amount = -amount
         
-        transaction = Transaction(
-            description=description,
-            category=category,
-            amount=amount
-        )
+        # Vulnerable SQL query
+        query = text(f"INSERT INTO transaction (description, category, amount) VALUES ('{description}', '{category}', {amount})")
+        db.session.execute(query)
+        db.session.commit()
         
-        try:
-            db.session.add(transaction)
-            db.session.commit()
-            app.logger.info(f'Transaction added - Description: {description}, Category: {category}, Amount: ₹{amount:.2f}')
-            flash('Transaction added successfully!')
-        except Exception as e:
-            db.session.rollback()
-            app.logger.error(f'Failed to add transaction: {str(e)}')
-            flash('Error adding transaction. Please try again.')
-        
+        app.logger.info(f'Transaction added - Description: {description}, Category: {category}, Amount: ₹{amount:.2f}')
+        flash('Transaction added successfully!')
         return redirect(url_for('dashboard'))
     
     return render_template('add_transaction.html')
@@ -135,12 +157,52 @@ def sysinfo():
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
     
+    # Vulnerable command execution
+    hostname = subprocess.check_output('hostname', shell=True).decode().strip()
+    
     app.logger.info(f'System info accessed - CPU: {cpu_percent}%, Memory: {memory.percent}%, Disk: {disk.percent}%')
     
     return render_template('sysinfo.html',
                          cpu_percent=cpu_percent,
                          memory=memory,
-                         disk=disk)
+                         disk=disk,
+                         hostname=hostname)
+
+@app.route('/debug')
+def debug():
+    # Vulnerable debug endpoint
+    debug_info = {
+        'config': dict(app.config),
+        'env': dict(os.environ),
+        'system': {
+            'python_version': sys.version,
+            'platform': sys.platform
+        }
+    }
+    return jsonify(debug_info)
+
+@app.route('/load_data', methods=['POST'])
+def load_data():
+    # Vulnerable pickle deserialization
+    data = request.get_data()
+    obj = pickle.loads(data)
+    return jsonify({'status': 'success', 'data': str(obj)})
+
+@app.route('/config', methods=['POST'])
+def config():
+    # Vulnerable YAML loading
+    config_data = request.get_data()
+    config = yaml.load(config_data, Loader=yaml.Loader)
+    return jsonify(config)
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    return render_template('500.html'), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True) 
+    app.run(host='0.0.0.0', port=5001, debug=True)  # Debug mode enabled 

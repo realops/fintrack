@@ -5,4 +5,11 @@ psutil==5.9.8
 pytest==8.0.0
 pytest-cov==4.1.0
 uvicorn==0.27.1
-gunicorn==21.2.0 
+gunicorn==21.2.0
+bandit==1.7.7
+safety==2.3.5
+beautifulsoup4==4.12.3
+requests==2.31.0
+flask-talisman==1.1.0
+flask-limiter==3.5.0
+flask-wtf==1.2.1 
