@@ -35,6 +35,11 @@ class Transaction(db.Model):
     category = db.Column(db.String(50), nullable=False)
     amount = db.Column(db.Float, nullable=False)
 
+    def __init__(self, **kwargs):
+        super(Transaction, self).__init__(**kwargs)
+        if self.date is None:
+            self.date = datetime.utcnow()
+
 with app.app_context():
     db.create_all()
 

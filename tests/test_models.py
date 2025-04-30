@@ -15,6 +15,7 @@ def test_transaction_model(app):
         assert transaction.description == "Test Transaction"
         assert transaction.category == "Test"
         assert transaction.amount == 100.00
+        assert transaction.date is not None
         assert isinstance(transaction.date, datetime)
 
 def test_transaction_creation(app):
@@ -29,6 +30,7 @@ def test_transaction_creation(app):
         assert transaction.description == "Test Transaction"
         assert transaction.category == "Test"
         assert transaction.amount == 100.00
+        assert transaction.date is not None
         assert isinstance(transaction.date, datetime)
 
 def test_transaction_income(app):
@@ -42,6 +44,8 @@ def test_transaction_income(app):
         
         assert transaction.amount > 0
         assert transaction.category == "Income"
+        assert transaction.date is not None
+        assert isinstance(transaction.date, datetime)
 
 def test_transaction_expense(app):
     """Test expense transaction"""
@@ -54,6 +58,8 @@ def test_transaction_expense(app):
         
         assert transaction.amount < 0
         assert transaction.category == "Food"
+        assert transaction.date is not None
+        assert isinstance(transaction.date, datetime)
 
 def test_transaction_date_default(app):
     """Test that date is automatically set"""
@@ -65,4 +71,6 @@ def test_transaction_date_default(app):
         )
         
         assert transaction.date is not None
-        assert isinstance(transaction.date, datetime) 
+        assert isinstance(transaction.date, datetime)
+        # Test that the date is recent (within the last minute)
+        assert (datetime.utcnow() - transaction.date).total_seconds() < 60 
