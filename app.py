@@ -14,6 +14,7 @@ from flask_talisman import Talisman
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
+from flask_wtf import FlaskForm
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24).hex())
@@ -69,6 +70,9 @@ class Transaction(db.Model):
         if self.date is None:
             self.date = datetime.utcnow()
 
+class TransactionForm(FlaskForm):
+    pass
+
 with app.app_context():
     db.create_all()
 
@@ -93,6 +97,7 @@ def dashboard():
 
 @app.route('/add', methods=['GET', 'POST'])
 def add_transaction():
+    form = TransactionForm()
     if request.method == 'POST':
         try:
             description = request.form['description']
@@ -122,7 +127,7 @@ def add_transaction():
         
         return redirect(url_for('dashboard'))
     
-    return render_template('add_transaction.html')
+    return render_template('add_transaction.html', form=form)
 
 @app.route('/report')
 def report():
